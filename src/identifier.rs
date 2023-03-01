@@ -27,7 +27,7 @@ impl Default for Sequence {
     }
 }
 
-/// Generates sequencial
+/// Generates sequential
 impl<V> Identifier<V> for Sequence {
     type Id = u32;
     fn new_id(&self, _: &V) -> Self::Id {
