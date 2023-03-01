@@ -1,14 +1,15 @@
 #![allow(missing_docs)]
 use core::hash::Hash;
 use std::{
-    cmp::Ordering,
     collections::{HashMap, HashSet},
     sync::MutexGuard,
 };
 
+use args::{FindArguments, UpdateArguments};
 use errors::{locking, Cardinality, Conflict, KeyNotFound};
 use http_problem::Result;
 use identifier::{Identifier, Sequence};
+pub mod args;
 pub mod errors;
 pub mod identifier;
 
@@ -23,43 +24,6 @@ where
 {
     storage: Mutex<HashMap<K, V>>,
     identifier: I,
-}
-
-pub trait Id<T: Hash + Eq> {
-    fn id(&self) -> T;
-}
-
-pub type CompareClosure<T> = dyn FnMut(&T, &T) -> Ordering;
-pub type Matcher<T> = dyn FnMut(&&T) -> bool;
-
-pub struct FindArguments<T> {
-    pub matcher: Box<Matcher<T>>,
-    pub order: Option<Box<CompareClosure<T>>>,
-}
-
-#[macro_export]
-macro_rules! find_args {
-    (matcher = $matcher_fn:expr, order = $order_fn:expr $(,)?) => {
-        FindArguments {
-            matcher: Box::new($matcher_fn),
-            order: Some(Box::new($order_fn)),
-            ..Default::default()
-        }
-    };
-}
-
-impl<T> Default for FindArguments<T> {
-    fn default() -> Self {
-        Self {
-            matcher: Box::new(|_: &&T| true),
-            order: None,
-        }
-    }
-}
-
-pub struct UpdateArguments<T, U: FnMut(&mut T)> {
-    pub matcher: Box<Matcher<T>>,
-    pub updater: U,
 }
 
 impl<V> Default for FakeDb<u32, V, Sequence>
@@ -191,12 +155,12 @@ where
     ///  * Updating a values resulting in duplicated ids results in a Conflict
     /// error
     ///  * Locking may result in a error
-    pub fn update_many<U: FnMut(&mut V) + 'static + Copy>(
+    pub fn update_many(
         &self,
-        UpdateArguments::<V, U> {
+        UpdateArguments::<V> {
             mut matcher,
             mut updater,
-        }: UpdateArguments<V, U>,
+        }: UpdateArguments<V>,
     ) -> Result<()> {
         let mut storage = self.storage.lock().map_err(locking)?;
 
@@ -390,10 +354,10 @@ mod tests {
         .expect("db failed to insert_many");
 
         let countries = db
-            .find_many(find_args!(
-                matcher = |_| true,
-                order = |c1, c2| c1.id.cmp(&c2.id),
-            ))
+            .find_many(args!(FindArguments<Country> {
+                matcher: |_| true,
+                order: |c1, c2| c1.id.cmp(&c2.id),
+            }))
             .unwrap();
 
         assert_eq!(countries.len(), 2);
@@ -418,7 +382,9 @@ mod tests {
         .expect_err("cardinality infringed");
 
         let countries = db
-            .find_many(find_args!(order = |c1, c2| c1.id.cmp(&c2.id),))
+            .find_many(args!(FindArguments<Country> {
+                order: |c1, c2| c1.id.cmp(&c2.id),
+            }))
             .unwrap();
 
         assert_eq!(countries.len(), 0);
@@ -444,7 +410,7 @@ mod tests {
         db.insert_many(vec![north_korea, south_korea])
             .expect_err("db did not failed to write many to db");
 
-        let countries = db.find_many(find_args!()).unwrap();
+        let countries = db.find_many(args!(FindArguments<Country> {})).unwrap();
 
         assert_eq!(countries.len(), 1);
     }
@@ -524,12 +490,10 @@ mod tests {
             ),
         };
 
-        let args = UpdateArguments::<Country, _> {
-            matcher: Box::new(|&country| country.id < 506),
-            updater: |country: &mut Country| {
-                country.name = "Unknown";
-            },
-        };
+        let args = args!(UpdateArguments<Country>{
+            matcher: |&country| country.id < 506,
+            updater: |country| country.name = "Unknown",
+        });
         db.update_many(args).expect("db did not update many");
         let peru = db.find_by_id(&51).unwrap().expect("db did not find id 51");
         let chile = db.find_by_id(&56).unwrap().expect("db did not find id 56");
@@ -576,10 +540,10 @@ mod tests {
             ),
         };
 
-        let args = UpdateArguments::<Country, _> {
-            matcher: Box::new(|&country| country.id < 506),
-            updater: |country: &mut Country| country.id = 51,
-        };
+        let args = args!(UpdateArguments<Country> {
+            updater: |country| country.id = 51,
+            matcher: |&country| country.id < 506,
+        });
         db.update_many(args).expect_err("db did not update many");
         let peru = db.find_by_id(&51).unwrap().expect("db did not find id 51");
         let chile = db.find_by_id(&56).unwrap().expect("db did not find id 56");
@@ -676,7 +640,9 @@ mod tests {
             ),
         };
 
-        let args = find_args!(matcher = |country: &&Country| country.name == "Costa Rica",);
+        let args = args!(FindArguments<Country> {
+            matcher: |country: &&Country| country.name == "Costa Rica",
+        });
         let costa_rica = db
             .find_one(args)
             .expect("db did not find a country called 'Costa Rica'")
@@ -719,10 +685,10 @@ mod tests {
             ),
         };
 
-        let args = find_args!(
-            matcher = |country: &&Country| country.id < 11,
-            order = |c1, c2| c1.id.cmp(&c2.id),
-        );
+        let args = args!(FindArguments<Country> {
+            order: |c1: &Country, c2: &Country| c1.id.cmp(&c2.id),
+            matcher: |country| country.id < 11,
+        });
         let countries = db.find_many(args).unwrap();
 
         assert_eq!(countries.len(), 2);
