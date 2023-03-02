@@ -4,7 +4,7 @@ A lib to help you fake a database for testing.
 Using mock in tests, declaring each of the calls a method makes your tests
 harder to read and usually noncohesive test data.
 With a fake DB, you test your code that depends a repository without making complex calls.
-The FakeDb comes with most common methods to search, write, delete and update values. All
+FakeDb comes with most common methods to search, write, delete and update values. All
 of that with thread-safe operations and well tested code.
 
 ## Usage

@@ -84,7 +84,7 @@ where
     ///  * Inserting a value with a in already insert results in a Conflict
     ///    error
     ///  * Locking may result in a error
-    pub fn insert(&self, value: V) -> Result<()> {
+    pub fn insert(&self, value: V) -> Result<K> {
         let id = self.identifier.new_id(&value);
         let mut storage = self.storage.lock().map_err(locking)?;
         if storage.get(&id).is_some() {
@@ -93,8 +93,9 @@ where
             }
             .into())
         } else {
-            storage.insert(id, value);
-            Ok(())
+            let key = id.clone();
+            storage.insert(key, value);
+            Ok(id)
         }
     }
 
@@ -103,7 +104,7 @@ where
     ///    error
     ///  * Inserting values with the same id results in a Cardinality error
     ///  * Locking may result in a error
-    pub fn insert_many(&self, values: Vec<V>) -> Result<()> {
+    pub fn insert_many(&self, values: Vec<V>) -> Result<Vec<K>> {
         self.check_cardinality(&values)?;
         let storage = self.storage.lock().map_err(locking)?;
 
@@ -114,12 +115,15 @@ where
         &self,
         mut storage: MutexGuard<'_, HashMap<K, V>>,
         values: Vec<V>,
-    ) -> Result<()> {
+    ) -> Result<Vec<K>> {
         let mut stage_storage = HashMap::<K, V>::with_capacity(values.len());
+        let mut ids = Vec::with_capacity(values.len());
         for value in values {
             let id = self.identifier.new_id(&value);
             if storage.get(&id).is_none() {
-                stage_storage.insert(id, value);
+                let key = id.clone();
+                ids.push(id);
+                stage_storage.insert(key, value);
             } else {
                 return Err(Conflict {
                     key: format!("{id:?}"),
@@ -129,7 +133,7 @@ where
         }
         storage.extend(stage_storage);
 
-        Ok(())
+        Ok(ids)
     }
 
     /// # Errors
@@ -328,14 +332,16 @@ mod tests {
     pub fn test_db_writes_one_to_storage() {
         let db = FakeDb::new(CountryId);
 
-        db.insert(Country {
-            id: 7,
-            name: "Kazakhstan",
-        })
-        .expect("db did not write Kazakhstan");
+        let id = db
+            .insert(Country {
+                id: 7,
+                name: "Kazakhstan",
+            })
+            .expect("db did not write Kazakhstan");
 
         let country = db.find_by_id(&7).unwrap().expect("kazakhstan wasn't found");
         assert_eq!(country.id, 7);
+        assert_eq!(id, 7);
         assert_eq!(country.name, "Kazakhstan");
     }
 
@@ -343,17 +349,18 @@ mod tests {
     pub fn test_db_writes_many_to_storage() {
         let db = FakeDb::new(CountryId);
 
-        db.insert_many(vec![
-            Country {
-                id: 49,
-                name: "Germany",
-            },
-            Country {
-                id: 39,
-                name: "Italy",
-            },
-        ])
-        .expect("db failed to insert_many");
+        let ids = db
+            .insert_many(vec![
+                Country {
+                    id: 49,
+                    name: "Germany",
+                },
+                Country {
+                    id: 39,
+                    name: "Italy",
+                },
+            ])
+            .expect("db failed to insert_many");
 
         let countries = db
             .find_many(args!(FindArguments<Country> {
@@ -361,6 +368,10 @@ mod tests {
                 order: |c1, c2| c1.id.cmp(&c2.id),
             }))
             .unwrap();
+
+        assert_eq!(ids[0], 49);
+        assert_eq!(ids[1], 39);
+        assert_eq!(ids.len(), 2);
 
         assert_eq!(countries.len(), 2);
         assert_eq!(countries[0].id, 39);
